@@ -1,9 +1,12 @@
 from typing import Dict, List, Optional, Sequence, Tuple, Callable
+import os
+import sys
 
 import torch
+from utils.trajectory_viz import extract_trajectory_from_text, visualize_trajectory_on_image
 from flash_attn.flash_attn_interface import flash_attn_varlen_func
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
-from transformers import Trainer
+from transformers import Trainer, TrainerCallback
 from transformers.cache_utils import Cache
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.processing_utils import Unpack
@@ -26,6 +29,9 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeModel,
 )
 from transformers.utils import logging
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../../', 'qwen-vl-finetune'))
+from qwenvl.data.data_processor import preprocess_qwen_visual
 
 logger = logging.get_logger(__name__)
 
@@ -489,6 +495,140 @@ def create_optimizer(self):
         self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
 
     return self.optimizer
+
+
+class SavePreprocessorConfigCallback(TrainerCallback):
+    """Callback to save preprocessor_config.json for each checkpoint."""
+    
+    def __init__(self, image_processor):
+        self.image_processor = image_processor
+    
+    def on_save(self, args, state, control, **kwargs):
+        """Called when a checkpoint is saved."""
+        if self.image_processor is not None:
+            checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
+            if os.path.exists(checkpoint_dir):
+                try:
+                    self.image_processor.save_pretrained(checkpoint_dir)
+                    if args.local_rank <= 0:  # Only print on main process
+                        print(f"Saved preprocessor_config.json to {checkpoint_dir}")
+                except Exception as e:
+                    if args.local_rank <= 0:
+                        print(f"Warning: Failed to save image processor config to {checkpoint_dir}: {e}")
+        return control
+
+
+class EvalPromptGroundTruthLoggerCallback(TrainerCallback):
+    """Callback to log evaluation prompts and ground truth traces to wandb."""
+    
+    def __init__(self, eval_dataset, tokenizer, processor=None, train_dataset=None):
+        """
+        Args:
+            eval_dataset: The evaluation dataset
+            tokenizer: The tokenizer to decode token IDs
+            train_dataset: The training dataset (optional, for logging training samples)
+        """
+        self.eval_dataset = eval_dataset
+        self.train_dataset = train_dataset
+        self.tokenizer = tokenizer
+        self.processor = processor
+        self.val_table = None
+        self.train_table = None
+        
+    
+    def _predict_one(self, model, processor, raw_item):
+        """Run a single-sample generation using training-consistent preprocessing."""        
+        # Build an inference sample with only the user turn and the data_path
+        inference_sample = {
+            "id": raw_item.get("id", -1),
+            "image": raw_item.get("image", []),
+            "video": raw_item.get("video", []),
+            "conversations": [raw_item["conversations"][0]],
+            "data_path": raw_item.get("data_path", "")
+        }
+
+        processed = preprocess_qwen_visual([inference_sample], processor, add_gen_prompt=True)
+
+        inputs = {"input_ids": processed["input_ids"].to(model.device)}
+        if "pixel_values" in processed:
+            inputs["pixel_values"] = processed["pixel_values"].to(model.device)
+        if "image_grid_thw" in processed:
+            inputs["image_grid_thw"] = processed["image_grid_thw"].to(model.device)
+
+        with torch.no_grad():
+            gen_ids = model.generate(
+                **inputs,
+                max_new_tokens=512,
+                do_sample=False,
+            )
+        
+        # Trim the prompt tokens
+        trimmed = gen_ids[:, inputs["input_ids"].shape[1]:]
+        text = processor.tokenizer.batch_decode(
+            trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0]
+        return text
+
+    def _collect_samples(self, dataset, n):
+        total = len(dataset.list_data_dict)
+        n = min(n, total)
+        return list(range(n)) if n == total else list(range(n))
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        """Called after evaluation is complete: log 5 eval + 5 train predictions (text only)."""
+        if getattr(args, "local_rank", -1) not in (-1, 0):
+            return control
+        if not getattr(args, "report_to", None) or ("wandb" not in args.report_to):
+            return control
+
+        model = kwargs.get("model", None)
+        if model is None or self.processor is None:
+            return control
+
+        try:
+            import wandb
+        except Exception:
+            return control
+
+        if self.val_table is None:
+            self.val_table = wandb.Table(
+                columns=["step", "prompt", "ground_truth", "prediction"],
+                data=[],
+            )
+        if self.train_table is None:
+            self.train_table = wandb.Table(
+                columns=["step", "prompt", "ground_truth", "prediction"],
+                data=[],
+            )
+
+        # Eval split: take first 5 items for simplicity and determinism
+        if self.eval_dataset is not None:
+            eval_indices = self._collect_samples(self.eval_dataset, 5)
+            for idx in eval_indices:
+                raw = self.eval_dataset.list_data_dict[idx]
+                
+                prompt = raw["conversations"][0]["value"] if len(raw.get("conversations", [])) > 0 else ""
+                gt = raw["conversations"][1]["value"] if len(raw.get("conversations", [])) > 1 else ""
+                pred = self._predict_one(model, self.processor, raw)
+                
+                self.val_table.add_data(state.global_step, prompt, gt, pred)
+
+        # Train split: take first 5 items if provided
+        if self.train_dataset is not None:
+            train_indices = self._collect_samples(self.train_dataset, 5)
+            for idx in train_indices:
+                raw = self.train_dataset.list_data_dict[idx]
+                
+                prompt = raw["conversations"][0]["value"] if len(raw.get("conversations", [])) > 0 else ""
+                gt = raw["conversations"][1]["value"] if len(raw.get("conversations", [])) > 1 else ""
+                pred = self._predict_one(model, self.processor, raw)
+                
+                self.train_table.add_data(state.global_step, prompt, gt, pred)
+
+        wandb.log({"completions/val_results": self.val_table})
+        wandb.log({"completions/train_results": self.train_table})
+
+        return control
 
 
 # Apply monkey patches

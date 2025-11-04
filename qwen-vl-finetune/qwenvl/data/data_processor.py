@@ -1,6 +1,7 @@
 import json
 import random
 import logging
+import copy
 import re
 import time
 import itertools
@@ -202,6 +203,7 @@ def _build_messages(item: Dict[str, Any], base_path: Path) -> List[Dict[str, Any
 def preprocess_qwen_visual(
     sources,
     processor,
+    add_gen_prompt=False
 ) -> Dict:
     if len(sources) != 1:
         raise ValueError(f"Expected 1 source, got {len(sources)}")
@@ -211,7 +213,7 @@ def preprocess_qwen_visual(
     messages = _build_messages(source, base_path)
 
     full_result = processor.apply_chat_template(
-        messages, tokenize=True, return_dict=True, return_tensors="pt"
+        messages, tokenize=True, return_dict=True, return_tensors="pt", add_generation_prompt=add_gen_prompt
     )
 
     input_ids = full_result["input_ids"]
@@ -679,14 +681,23 @@ class FlattenedDataCollatorForSupervisedDataset(DataCollatorForSupervisedDataset
 def make_supervised_data_module(processor, data_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
     train_dataset = LazySupervisedDataset(processor, data_args=data_args)
+
+    # Create evaluation dataset if specified
+    eval_dataset = None
+    if hasattr(data_args, 'eval_dataset_use') and data_args.eval_dataset_use is not None:
+        # Create a deep copy of data_args for evaluation dataset
+        eval_data_args = copy.deepcopy(data_args)
+        eval_data_args.dataset_use = data_args.eval_dataset_use
+        eval_dataset = LazySupervisedDataset(processor=processor, data_args=eval_data_args)
+
     if data_args.data_flatten or data_args.data_packing:
         data_collator = FlattenedDataCollatorForSupervisedDataset(processor.tokenizer)
         return dict(
-            train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
+            train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
         )
     data_collator = DataCollatorForSupervisedDataset(processor.tokenizer)
     return dict(
-        train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
+        train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
     )
 
 

@@ -25,7 +25,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from trainer import replace_qwen2_vl_attention_class
+from trainer import replace_qwen2_vl_attention_class, SavePreprocessorConfigCallback, EvalPromptGroundTruthLoggerCallback
 
 from transformers import (
     Qwen2VLForConditionalGeneration,
@@ -184,8 +184,27 @@ def train(attn_implementation="flash_attention_2"):
             model.model.print_trainable_parameters()
     
     data_module = make_supervised_data_module(processor, data_args=data_args)
+    
+    # Create callbacks
+    preprocessor_callback = SavePreprocessorConfigCallback(processor.image_processor)
+    
+    # Create evaluation callback if eval dataset exists
+    callbacks = [preprocessor_callback]
+    if data_module.get('eval_dataset') is not None:
+        eval_callback = EvalPromptGroundTruthLoggerCallback(
+            eval_dataset=data_module['eval_dataset'],
+            tokenizer=tokenizer,
+            processor=processor,
+            train_dataset=data_module.get('train_dataset')
+        )
+        callbacks.append(eval_callback)
+    
     trainer = Trainer(
-        model=model, processing_class=tokenizer, args=training_args, **data_module
+        model=model, 
+        processing_class=tokenizer, 
+        args=training_args, 
+        callbacks=callbacks,
+        **data_module
     )
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
