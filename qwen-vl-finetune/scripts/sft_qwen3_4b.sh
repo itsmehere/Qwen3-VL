@@ -12,7 +12,7 @@ NNODES=${WORLD_SIZE:-1}
 
 # GPU configuration - specify directly in script
 NPROC_PER_NODE=4
-CUDA_VISIBLE_DEVICES=2,3,4,5
+CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # DeepSpeed configuration
 deepspeed=./scripts/zero3.json
@@ -21,7 +21,7 @@ deepspeed=./scripts/zero3.json
 llm=Qwen/Qwen3-VL-4B-Instruct
 
 # Training hyperparameters
-lr=1e-5
+lr=5e-5
 batch_size=2
 grad_accum_steps=4
 
@@ -54,14 +54,14 @@ args="
     --tune_mm_llm True \
     --bf16 \
     --output_dir ${output_dir} \
-    --num_train_epochs 2.0 \
+    --num_train_epochs 5.0 \
     --per_device_train_batch_size ${batch_size} \
     --per_device_eval_batch_size $((batch_size*2)) \
     --gradient_accumulation_steps ${grad_accum_steps} \
     --max_pixels 50176 \
     --min_pixels 784 \
     --eval_strategy "steps" \
-    --eval_steps 100 \
+    --eval_steps 250 \
     --eval_dataset_use ${eval_datasets} \
     --save_strategy "steps" \
     --save_steps 500 \

@@ -11,49 +11,27 @@ from PIL import Image, ImageDraw
 from typing import List, Tuple, Optional
 
 
-def extract_trajectory_from_text(text: str) -> List[List[int]]:
-    """
-    Extract trajectory coordinates from model output text.
-    
-    Args:
-        text: The text output from the model containing trajectory information
-        
+def extract_trajectory_from_text(text: str) -> List[List[List[int]]]:
+    """Return a list of trajectories parsed from lines starting with "Traces:".
+
+    Example input:
+      "Traces: [[1,2], [3,4]]\nTraces: [[3,4],[5,6]]"
     Returns:
-        List of [x, y] coordinate pairs as integers, or empty list if no trajectory found
-        
-    Examples:
-        >>> extract_trajectory_from_text("2D visual trace: [[100, 200], [150, 250]]")
-        [[100, 200], [150, 250]]
-        >>> extract_trajectory_from_text("Traces: [[100, 200], [150, 250]]")
-        [[100, 200], [150, 250]]
-        >>> extract_trajectory_from_text("No trajectory here")
-        []
+      [[[1,2],[3,4]], [[3,4],[5,6]]]
     """
-    # Look for individual coordinate pairs [x, y] in the text
-    # This approach works for both nested [[...]] and individual [...] patterns
-    coord_pattern = r'\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]'
-    coord_matches = re.findall(coord_pattern, text)
-    
-    if not coord_matches:
-        return []
-    
-    trajectory = []
-    for x_str, y_str in coord_matches:
-        try:
-            # Convert to floats then to integers for pixel coordinates
-            x = int(float(x_str.strip()))
-            y = int(float(y_str.strip()))
-            trajectory.append([x, y])
-        except (ValueError, IndexError):
-            continue
-            
-    return trajectory
+    traces: List[List[List[int]]] = []
+    for line in text.splitlines():
+        if line.startswith("Traces:"):
+            coords = re.findall(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]", line)
+            traj = [[int(x), int(y)] for x, y in coords]
+            traces.append(traj)
+    return traces
 
 
 def visualize_trajectory_on_image(
     trajectory: List[List[int]], 
-    image_path: str, 
-    output_path: str,
+    image_path: Optional[str] = None, 
+    output_path: Optional[str] = None,
     start_color: Tuple[int, int, int] = (0, 255, 0),    # Green (start)
     end_color: Tuple[int, int, int] = (255, 0, 0),      # Red (end)
     line_thickness: int = 4,
@@ -75,20 +53,22 @@ def visualize_trajectory_on_image(
     Returns:
         numpy array of the output image, or None if trajectory is too short
     """
-    
-    if not trajectory or len(trajectory) < 2:
-        return None
         
     # Load or use existing image
     if existing_image is not None:
-        pil_image = existing_image
+        if isinstance(existing_image, np.ndarray):
+            pil_image = Image.fromarray(existing_image)
+        else:
+            pil_image = existing_image
     else:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
-        
         image = Image.open(image_path).convert('RGB')
         pil_image = image.copy()
     draw = ImageDraw.Draw(pil_image)
+
+    if not trajectory or len(trajectory) < 2:
+        return np.array(pil_image)
     
     # Draw gradient line segments
     num_segments = len(trajectory) - 1

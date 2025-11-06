@@ -1,6 +1,9 @@
 from typing import Dict, List, Optional, Sequence, Tuple, Callable
 import os
 import sys
+import re
+import wandb
+from pathlib import Path
 
 import torch
 from utils.trajectory_viz import extract_trajectory_from_text, visualize_trajectory_on_image
@@ -532,8 +535,8 @@ class EvalPromptGroundTruthLoggerCallback(TrainerCallback):
         self.train_dataset = train_dataset
         self.tokenizer = tokenizer
         self.processor = processor
-        self.val_table = None
-        self.train_table = None
+        self._val_rows = []
+        self._train_rows = []
         
     
     def _predict_one(self, model, processor, raw_item):
@@ -574,6 +577,36 @@ class EvalPromptGroundTruthLoggerCallback(TrainerCallback):
         n = min(n, total)
         return list(range(n)) if n == total else list(range(n))
 
+    def _build_logged_row(self, state, model, raw):
+        prompt = raw["conversations"][0]["value"] if len(raw.get("conversations", [])) > 0 else ""
+        gt = raw["conversations"][1]["value"] if len(raw.get("conversations", [])) > 1 else ""
+        pred = self._predict_one(model, self.processor, raw)
+        
+        # Context images
+        image_paths = str(raw["image"])
+        image_list = [
+            "/home/mrao/DarrellGroup/Qwen2.5-VL/data/rlbench_icl_small/train/" + p for p in raw["image"]
+        ]
+        
+        # Context images + gt trace overlay
+        context_trajs = extract_trajectory_from_text(prompt)
+        context_overlaid = []
+        for i, im in enumerate(image_list[:-1]):
+            traj = context_trajs[i]
+            context_overlaid.append(visualize_trajectory_on_image(traj, im, output_path=""))
+        image_context = [wandb.Image(img) for img in context_overlaid]
+        
+        # Trace overlay on target image
+        gt_traj = extract_trajectory_from_text(gt)[0]
+        gt_overlaid = visualize_trajectory_on_image(gt_traj, image_list[-1])
+        pred_traj = extract_trajectory_from_text(pred)
+        pred_gt_overlaid = visualize_trajectory_on_image(pred_traj, None, existing_image=gt_overlaid, start_color=(0, 255, 255), end_color=(0, 0, 255))
+        
+        # Final prediction image is the GT overlayed with the predicted trajectory
+        prediction_image = wandb.Image(pred_gt_overlaid)
+        
+        return [state.global_step, image_paths, prompt, image_context, prediction_image, gt, pred]
+
     def on_evaluate(self, args, state, control, **kwargs):
         """Called after evaluation is complete: log 5 eval + 5 train predictions (text only)."""
         if getattr(args, "local_rank", -1) not in (-1, 0):
@@ -585,48 +618,37 @@ class EvalPromptGroundTruthLoggerCallback(TrainerCallback):
         if model is None or self.processor is None:
             return control
 
-        try:
-            import wandb
-        except Exception:
-            return control
-
-        if self.val_table is None:
-            self.val_table = wandb.Table(
-                columns=["step", "prompt", "ground_truth", "prediction"],
-                data=[],
-            )
-        if self.train_table is None:
-            self.train_table = wandb.Table(
-                columns=["step", "prompt", "ground_truth", "prediction"],
-                data=[],
-            )
+        import wandb
 
         # Eval split: take first 5 items for simplicity and determinism
         if self.eval_dataset is not None:
             eval_indices = self._collect_samples(self.eval_dataset, 5)
             for idx in eval_indices:
                 raw = self.eval_dataset.list_data_dict[idx]
-                
-                prompt = raw["conversations"][0]["value"] if len(raw.get("conversations", [])) > 0 else ""
-                gt = raw["conversations"][1]["value"] if len(raw.get("conversations", [])) > 1 else ""
-                pred = self._predict_one(model, self.processor, raw)
-                
-                self.val_table.add_data(state.global_step, prompt, gt, pred)
+                row = self._build_logged_row(state, model, raw)
+                self._val_rows.append(row)
 
         # Train split: take first 5 items if provided
         if self.train_dataset is not None:
             train_indices = self._collect_samples(self.train_dataset, 5)
             for idx in train_indices:
                 raw = self.train_dataset.list_data_dict[idx]
-                
-                prompt = raw["conversations"][0]["value"] if len(raw.get("conversations", [])) > 0 else ""
-                gt = raw["conversations"][1]["value"] if len(raw.get("conversations", [])) > 1 else ""
-                pred = self._predict_one(model, self.processor, raw)
-                
-                self.train_table.add_data(state.global_step, prompt, gt, pred)
+                row = self._build_logged_row(state, model, raw)
+                self._train_rows.append(row)
 
-        wandb.log({"completions/val_results": self.val_table})
-        wandb.log({"completions/train_results": self.train_table})
+        if self._val_rows:
+            val_table = wandb.Table(
+                columns=["step", "image_paths", "prompt", "image_context", "prediction_image", "ground_truth", "prediction"],
+                data=self._val_rows,
+            )
+            wandb.log({"completions/val_results": val_table})
+        
+        if self._train_rows:
+            train_table = wandb.Table(
+                columns=["step", "image_paths", "prompt", "image_context", "prediction_image", "ground_truth", "prediction"],
+                data=self._train_rows,
+            )
+            wandb.log({"completions/train_results": train_table})
 
         return control
 
