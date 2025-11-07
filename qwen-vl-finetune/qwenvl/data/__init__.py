@@ -1,19 +1,31 @@
 import re
 
 # Define placeholders for dataset paths
-RLBENCH_ICL_10_FULL_TRAIN = {
-    "annotation_path": "/home/mrao/DarrellGroup/Qwen2.5-VL/data/rlbench_icl_small/anns/train_icl-10_full.json",
+RLBENCH_ICL_8_FULL_TRAIN = {
+    "annotation_path": "/home/mrao/DarrellGroup/data/data_gen/data/rlbench-train_icl-8_full-normalized.json",
     "data_path": "/home/mrao/DarrellGroup/Qwen2.5-VL/data/rlbench_icl_small/train",
 }
 
-RLBENCH_ICL_10_FULL_VAL = {
-    "annotation_path": "/home/mrao/DarrellGroup/Qwen2.5-VL/data/rlbench_icl_small/anns/val_icl-10_full.json",
+RLBENCH_ICL_8_FULL_VAL = {
+    "annotation_path": "/home/mrao/DarrellGroup/data/data_gen/data/rlbench-val_icl-8_full-normalized.json",
     "data_path": "/home/mrao/DarrellGroup/Qwen2.5-VL/data/rlbench_icl_small/train",
+}
+
+REAL_ICL_8_FULL_TRAIN = {
+    "annotation_path": "/home/mrao/DarrellGroup/data/data_gen/data/real-train_icl-8_full-normalized.json",
+    "data_path": "/home/mrao/DarrellGroup/data/anqil_rh20t_subset_rfm_rh20t_robot/images",
+}
+
+REAL_ICL_8_FULL_VAL = {
+    "annotation_path": "/home/mrao/DarrellGroup/data/data_gen/data/real-val_icl-8_full-normalized.json",
+    "data_path": "/home/mrao/DarrellGroup/data/anqil_rh20t_subset_rfm_rh20t_robot/images",
 }
     
 data_dict = {
-    "rlbench_icl_10_full_train": RLBENCH_ICL_10_FULL_TRAIN,
-    "rlbench_icl_10_full_val": RLBENCH_ICL_10_FULL_VAL,
+    "rlbench_icl_8_full_train": RLBENCH_ICL_8_FULL_TRAIN,
+    "rlbench_icl_8_full_val": RLBENCH_ICL_8_FULL_VAL,
+    "real_icl_8_full_train": REAL_ICL_8_FULL_TRAIN,
+    "real_icl_8_full_val": REAL_ICL_8_FULL_VAL,
 }
 
 

@@ -29,13 +29,13 @@ grad_accum_steps=4
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets="rlbench_icl_10_full_train"
-eval_datasets="rlbench_icl_10_full_val"
+datasets="rlbench_icl_8_full_train,real_icl_8_full_train"
+eval_datasets="rlbench_icl_8_full_val,real_icl_8_full_val"
 
 # Output configuration
 wandb_project="Qwen3-ICL"
-run_name="Qwen3-Trace-ICL-10-Full"
-output_dir=./models/Qwen3-Trace-ICL-10-Full
+run_name="Qwen3-4B-Trace-RLBench-Real"
+output_dir=./models/Qwen3-4B-Trace-RLBench-Real
 
 # Create output directory and save script copy
 mkdir -p ${output_dir}
@@ -80,6 +80,7 @@ args="
 
 # Report to team
 export WANDB_PROJECT="${wandb_project}"
+export WANDB_API_KEY="f437168ada63e2a37a8ede24bdff617daf8cdee6"
 
 # Launch training
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} torchrun --nproc_per_node=${NPROC_PER_NODE} \

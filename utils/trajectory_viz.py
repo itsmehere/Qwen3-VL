@@ -22,8 +22,8 @@ def extract_trajectory_from_text(text: str) -> List[List[List[int]]]:
     traces: List[List[List[int]]] = []
     for line in text.splitlines():
         if line.startswith("Traces:"):
-            coords = re.findall(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]", line)
-            traj = [[int(x), int(y)] for x, y in coords]
+            coords = re.findall(r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]", line)
+            traj = [[float(x), float(y)] for x, y in coords]
             traces.append(traj)
     return traces
 

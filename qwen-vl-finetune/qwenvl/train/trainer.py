@@ -6,6 +6,7 @@ import wandb
 from pathlib import Path
 
 import torch
+from PIL import Image
 from utils.trajectory_viz import extract_trajectory_from_text, visualize_trajectory_on_image
 from flash_attn.flash_attn_interface import flash_attn_varlen_func
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
@@ -584,22 +585,34 @@ class EvalPromptGroundTruthLoggerCallback(TrainerCallback):
         
         # Context images
         image_paths = str(raw["image"])
+        
+        # Use data_path from the raw item instead of hardcoded paths
+        data_path = raw["data_path"]
         image_list = [
-            "/home/mrao/DarrellGroup/Qwen2.5-VL/data/rlbench_icl_small/train/" + p for p in raw["image"]
+            os.path.join(data_path, p) if data_path else p for p in raw["image"]
         ]
         
         # Context images + gt trace overlay
         context_trajs = extract_trajectory_from_text(prompt)
         context_overlaid = []
-        for i, im in enumerate(image_list[:-1]):
-            traj = context_trajs[i]
-            context_overlaid.append(visualize_trajectory_on_image(traj, im, output_path=""))
+        for i, im_path in enumerate(image_list[:-1]):
+            img = Image.open(im_path).convert('RGB')
+            img_width, img_height = img.size
+
+            traj = [[int(x * img_width), int(y * img_height)] for x, y in context_trajs[i]]
+            context_overlaid.append(visualize_trajectory_on_image(traj, im_path, output_path=""))
         image_context = [wandb.Image(img) for img in context_overlaid]
         
         # Trace overlay on target image
+        target_img = Image.open(image_list[-1]).convert('RGB')
+        target_width, target_height = target_img.size
+        
         gt_traj = extract_trajectory_from_text(gt)[0]
+        gt_traj = [[int(x * target_width), int(y * target_height)] for x, y in gt_traj]
         gt_overlaid = visualize_trajectory_on_image(gt_traj, image_list[-1])
-        pred_traj = extract_trajectory_from_text(pred)
+        
+        pred_traj = extract_trajectory_from_text(pred)[0]
+        pred_traj = [[int(x * target_width), int(y * target_height)] for x, y in pred_traj]
         pred_gt_overlaid = visualize_trajectory_on_image(pred_traj, None, existing_image=gt_overlaid, start_color=(0, 255, 255), end_color=(0, 0, 255))
         
         # Final prediction image is the GT overlayed with the predicted trajectory
